@@ -49,7 +49,7 @@ export function computeRowFlags(
   const hardwareRequired = !isBasic;
   const hardware = resolveHardwareDeliveryDate(mrp, location.delivery_date);
 
-  const recommendedQcDate = computeRecommendedQcDate(mrp, location.opening_date, today);
+  const recommendedQcDate = computeRecommendedQcDate(mrp, location.opening_date);
   const manualQcDate = parseFlexDate(location.qc_date);
   const effectiveQcDate = manualQcDate ?? recommendedQcDate;
   const qcSource: RowFlags["qcSource"] = manualQcDate
