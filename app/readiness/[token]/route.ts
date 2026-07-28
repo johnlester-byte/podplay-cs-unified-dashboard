@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 
+import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(_request: Request, { params }: { params: { token: string } }) {
@@ -7,12 +10,42 @@ export async function GET(_request: Request, { params }: { params: { token: stri
     return new NextResponse("Not found", { status: 404 });
   }
 
-  return new NextResponse(renderHtml(params.token), {
+  // Is the viewer a signed-in PodPlay user? Customers open this via the token
+  // link with no dashboard session. Used to gate internal-only controls (Clear).
+  let isInternal = false;
+  try {
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    isInternal = Boolean(user);
+  } catch {
+    isInternal = false;
+  }
+
+  // Look up the club tier (token -> readiness -> location). Basic tiers don't
+  // require a QC call, so the form offers an "N/A" option for the QC date.
+  let tier: string | null = null;
+  try {
+    const admin = createAdminClient();
+    const rr = await admin.from("readiness").select("location_id").eq("token", params.token).maybeSingle();
+    const locationId = (rr.data as { location_id?: string } | null)?.location_id;
+    if (locationId) {
+      const lr = await admin.from("locations").select("tier").eq("id", locationId).maybeSingle();
+      tier = (lr.data as { tier?: string | null } | null)?.tier ?? null;
+    }
+  } catch {
+    tier = null;
+  }
+
+  return new NextResponse(renderHtml(params.token, { tier, isInternal }), {
     headers: { "content-type": "text/html; charset=utf-8" },
   });
 }
 
-function renderHtml(token: string): string {
+function renderHtml(token: string, opts: { tier: string | null; isInternal: boolean }): string {
+  const isBasic = (opts.tier ?? "").toLowerCase().includes("basic");
+  const isInternal = opts.isInternal;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -110,7 +143,7 @@ input:disabled, select:disabled, textarea:disabled { background: #eef1f6; color:
     <span class="pct" id="barPct">0% ready</span>
     <span class="save-status" id="saveStatus"></span>
     <button class="primary" onclick="window.print()">Export PDF</button>
-    <button class="danger" onclick="clearAll()">Clear</button>
+    ${isInternal ? '<button class="danger" onclick="clearAll()">Clear</button>' : ""}
   </div>
 
   <h1>Open Readiness</h1>
@@ -120,7 +153,7 @@ input:disabled, select:disabled, textarea:disabled { background: #eef1f6; color:
   <div class="card">
     <div class="gate-head"><h2>Club context</h2></div>
     <div class="fields">
-      <div class="field"><label>Club name</label><input data-k="club_name" type="text"></div>
+      <div class="field"><label>Club name</label><input data-k="club_name" type="text" oninput="saveNow()"></div>
       <div class="field"><label>Court / bay count</label><input data-k="courts" type="number" min="1" max="60" value="1" oninput="buildMatrix()"></div>
     </div>
   </div>
@@ -131,7 +164,7 @@ input:disabled, select:disabled, textarea:disabled { background: #eef1f6; color:
     <div class="fields">
       <div class="field"><label>Grand-opening date</label><input data-k="grand_open" type="date" oninput="checkDates()"></div>
       <div class="field"><label>Soft-opening date</label><input data-k="soft_open" type="date" oninput="checkDates()"></div>
-      <div class="field"><label>QC call date</label><input data-k="qc_date" type="date" oninput="checkDates()"></div>
+      <div class="field"><label>QC call date</label><input data-k="qc_date" type="date" oninput="checkDates()">${isBasic ? '<label style="display:flex;gap:7px;align-items:center;margin-top:6px;font-size:13px;font-weight:500;color:#5b6470;cursor:pointer"><input type="checkbox" id="qcNa" style="width:16px;height:16px;flex:none;cursor:pointer" onchange="toggleQcNa()"> N/A — Basic tier (no QC call required)</label>' : ""}</div>
     </div>
     <div id="dateMsg" class="gate-note" style="display:none"></div>
     <p class="muted" style="margin:10px 0 0">Rule: the QC call must be at least 7 working days before the earliest customer-facing experience (grand or soft opening), and not on a Friday. Hardware must be installed before QC call.</p>
@@ -361,9 +394,17 @@ function renderGates(){
 
 function checkDates(){
   saveNow();
+  const msg=document.getElementById("dateMsg");
+  const naCb=document.getElementById("qcNa");
+  if(naCb && naCb.checked){
+    msg.className="gate-note";
+    msg.innerHTML="QC call marked <b>N/A</b> — Basic tier does not require a QC call.";
+    msg.style.display="block";
+    updateShortTime("", getVal("soft_open"));
+    return;
+  }
   const qc=getVal("qc_date");
   const cand=[getVal("grand_open"),getVal("soft_open")].filter(Boolean).map(d=>new Date(d+"T00:00"));
-  const msg=document.getElementById("dateMsg");
   updateShortTime(qc, getVal("soft_open"));
   if(!qc || !cand.length){ msg.style.display="none"; return; }
   const earliest=new Date(Math.min.apply(null,cand));
@@ -421,11 +462,28 @@ function restore(){
   document.querySelectorAll("[data-ack]").forEach(el=>{ const k="ack_"+el.dataset.ack; if(k in state) el.checked=!!state[k]; });
   document.querySelectorAll("[data-name]").forEach(el=>{ const k="name_"+el.dataset.name; if(k in state){ el.value=state[k]; stampSilent(el.dataset.name);} });
   document.querySelectorAll("[data-role]").forEach(el=>{ const k="role_"+el.dataset.role; if(k in state) el.value=state[k]; });
+  const qn=document.getElementById("qcNa"); if(qn) qn.checked=!!state.qc_na;
 }
 function stampSilent(id){
   const nm=(getName(id)||"").trim();
   const st=document.querySelector('[data-stamp="'+id+'"]');
   if(st && nm) st.textContent = "Attested by "+nm+(getRole(id)?(" ("+getRole(id)+")"):"");
+}
+
+// QC-call "N/A" (Basic tier only). When on, the QC date is cleared/disabled and
+// the scheduling rule is skipped. Re-enabling respects the club-ack lock.
+function applyQcNa(){
+  const cb=document.getElementById("qcNa"); if(!cb) return;
+  const qc=document.querySelector('[data-k="qc_date"]');
+  if(cb.checked){ if(qc){ qc.value=""; qc.disabled=true; } state.qc_date=""; }
+  else if(qc && !isClubAcked()){ qc.disabled=false; }
+}
+function toggleQcNa(){
+  const cb=document.getElementById("qcNa"); if(!cb) return;
+  state.qc_na=cb.checked;
+  applyQcNa();
+  checkDates();
+  saveNow();
 }
 
 function clearAll(){
@@ -438,7 +496,7 @@ function clearAll(){
   });
   document.querySelectorAll(".stamp").forEach(s=>s.textContent="");
   document.getElementById("dateMsg").style.display="none";
-  renderGates(); buildMatrix(); renderExtras(); restore(); updateProgress(); persist();
+  renderGates(); buildMatrix(); renderExtras(); restore(); applyQcNa(); updateProgress(); persist();
 }
 
 function slug(s){ return s.toLowerCase().replace(/[^a-z0-9]+/g,"_").slice(0,40); }
@@ -481,8 +539,9 @@ function applyLock(){
   checkDates();
   setSaveStatus("");
   const clubAck = document.querySelector('[data-ack="club"]');
-  if(clubAck) clubAck.addEventListener("change", ()=>{ saveNow(); applyLock(); });
+  if(clubAck) clubAck.addEventListener("change", ()=>{ saveNow(); applyLock(); applyQcNa(); });
   applyLock();
+  applyQcNa();
 })();
 </script>
 </body>
