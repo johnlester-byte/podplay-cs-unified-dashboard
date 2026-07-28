@@ -9,13 +9,15 @@
 //     no opening date, or no applicable boxes -> null (render "—").
 //   - Weekend shift (base): the base sits BEFORE opening, so shift BACKWARD to
 //     the preceding Friday (keeps the buffer, moves away from opening).
-//   - Hardware Delivery floor: never lands before the Hardware Delivery Date.
-//     If the shifted base is before it, clamp to the day after it, then shift
-//     that clamped date FORWARD to Monday if it lands on a weekend (a clamped
-//     date sits on a binding floor — shifting it backward would re-breach it).
+//   - Delivery floor: never lands before the LATEST actual box-Delivered date
+//     (hardware must be on-site before QC). Keyed to the real per-box delivered
+//     dates, NOT the planned `hardwareDeliveryDate` field. If the shifted base
+//     is before it, clamp to the day after it, then shift that clamped date
+//     FORWARD to Monday if it lands on a weekend (a clamped date sits on a
+//     binding floor — shifting it backward would re-breach it).
 //
 //   DETERMINISTIC — NOT date-of-render dependent. The result is a pure function
-//   of (opening date, hardware delivery date, all-boxes-delivered gate). It does
+//   of (opening date, latest box-delivered date, all-boxes-delivered gate). It does
 //   NOT reference "today": once computable it stays put and only re-plots when
 //   those inputs move — never because the current date advanced. Consequence: an
 //   opening within ~7 days can yield a recommendation in the past, which simply
@@ -75,13 +77,20 @@ export function computeRecommendedQcDate(
   base.setDate(base.getDate() - 7);
   let qc = weekendShiftBackward(base);
 
-  // Hardware Delivery floor: never before the Hardware Delivery Date. Clamp to
+  // Delivery floor: QC can never precede the LATEST actual box-Delivered date
+  // (hardware must physically be on-site first). Keyed to the real delivered
+  // dates — NOT the planned `hardwareDeliveryDate` field, which may be blank,
+  // N/A, or earlier than the actual arrivals. The gate above guarantees every
+  // applicable box has a delivered date, so this list is non-empty. Clamp to
   // the day after it, then shift that clamp FORWARD off any weekend (it sits on
   // a binding floor — a backward shift would re-breach it). No "today" floor:
   // the result is deterministic and must not drift as the current date moves.
-  const hwd = parseFlexDate(record.hardwareDeliveryDate);
-  if (hwd && qc.getTime() < startOfDay(hwd).getTime()) {
-    qc = weekendShiftForward(dayAfter(startOfDay(hwd)));
+  const latestDelivered = boxes
+    .map((b) => parseFlexDate(b.delivered))
+    .filter((d): d is Date => d !== null)
+    .reduce((a, b) => (a.getTime() >= b.getTime() ? a : b));
+  if (qc.getTime() < latestDelivered.getTime()) {
+    qc = weekendShiftForward(dayAfter(latestDelivered));
   }
 
   return qc;
