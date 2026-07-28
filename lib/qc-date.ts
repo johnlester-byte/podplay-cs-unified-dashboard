@@ -7,19 +7,19 @@
 //   - Gate: only computable once EVERY applicable hardware box (N/A boxes
 //     excluded, per getBoxCells) has a real Delivered date. Partial delivery,
 //     no opening date, or no applicable boxes -> null (render "—").
-//   - Weekend shift: if it lands on Sat/Sun, move forward to the following
-//     Monday (same forward convention Session 13 used, kept for app-wide
-//     consistency).
-//   - Floor #1 (compute-time only): never lands in the past. If the shifted
-//     base is before today, clamp to the day after today.
-//   - Floor #2: never lands before the Hardware Delivery Date. If the shifted
-//     base is before it, clamp to the day after it.
-//   - Both floors violated: clamp to the day after whichever floor is later.
-//   - Re-apply the weekend shift to any clamped result.
-//   The floors apply only at compute time — this is a pure derived-on-render
-//   value (no persistence), so a previously-valid date that today has caught up
-//   to naturally reads as overdue; the floors only prevent COMPUTING a fresh
-//   backdated value, they never bump an already-valid date forward.
+//   - Weekend shift (base): the base sits BEFORE opening, so shift BACKWARD to
+//     the preceding Friday (keeps the buffer, moves away from opening).
+//   - Hardware Delivery floor: never lands before the Hardware Delivery Date.
+//     If the shifted base is before it, clamp to the day after it, then shift
+//     that clamped date FORWARD to Monday if it lands on a weekend (a clamped
+//     date sits on a binding floor — shifting it backward would re-breach it).
+//
+//   DETERMINISTIC — NOT date-of-render dependent. The result is a pure function
+//   of (opening date, hardware delivery date, all-boxes-delivered gate). It does
+//   NOT reference "today": once computable it stays put and only re-plots when
+//   those inputs move — never because the current date advanced. Consequence: an
+//   opening within ~7 days can yield a recommendation in the past, which simply
+//   reads as overdue via qcConflict; it is intentionally NOT bumped forward.
 //
 // Conflict vs Opening Date: if the recommended QC date falls within 7 days of
 // opening (before or after — both are bad), flag it. 0–3 days = red (overdue),
@@ -40,6 +40,15 @@ function weekendShiftForward(d: Date): Date {
   return c;
 }
 
+// Sat (6) -> -1, Sun (0) -> -2 (backward to Friday). Returns a new Date.
+function weekendShiftBackward(d: Date): Date {
+  const c = new Date(d);
+  const day = c.getDay();
+  if (day === 6) c.setDate(c.getDate() - 1);
+  else if (day === 0) c.setDate(c.getDate() - 2);
+  return c;
+}
+
 function dayAfter(d: Date): Date {
   const c = new Date(d);
   c.setDate(c.getDate() + 1);
@@ -48,8 +57,7 @@ function dayAfter(d: Date): Date {
 
 export function computeRecommendedQcDate(
   record: MrpRecord | null,
-  openingDate: string | null,
-  today: Date = startOfDay(new Date())
+  openingDate: string | null
 ): Date | null {
   if (!record) return null;
 
@@ -62,26 +70,18 @@ export function computeRecommendedQcDate(
   if (boxes.length === 0) return null;
   if (!boxes.every((b) => parseFlexDate(b.delivered) !== null)) return null;
 
-  // Base: 7 calendar days before opening, then weekend-shifted.
+  // Base: 7 calendar days before opening, weekend-shifted back to Friday.
   const base = startOfDay(opening);
   base.setDate(base.getDate() - 7);
-  let qc = weekendShiftForward(base);
+  let qc = weekendShiftBackward(base);
 
-  // Floors (evaluated against the shifted base). Clamp to the day after the
-  // later of any violated floor.
+  // Hardware Delivery floor: never before the Hardware Delivery Date. Clamp to
+  // the day after it, then shift that clamp FORWARD off any weekend (it sits on
+  // a binding floor — a backward shift would re-breach it). No "today" floor:
+  // the result is deterministic and must not drift as the current date moves.
   const hwd = parseFlexDate(record.hardwareDeliveryDate);
-  let floor: Date | null = null;
-  if (qc.getTime() < today.getTime()) floor = today;
-  if (hwd) {
-    const h = startOfDay(hwd);
-    if (qc.getTime() < h.getTime() && (!floor || h.getTime() > floor.getTime())) {
-      floor = h;
-    }
-  }
-
-  if (floor) {
-    // Clamp could itself land on a weekend — re-apply the shift.
-    qc = weekendShiftForward(dayAfter(floor));
+  if (hwd && qc.getTime() < startOfDay(hwd).getTime()) {
+    qc = weekendShiftForward(dayAfter(startOfDay(hwd)));
   }
 
   return qc;
