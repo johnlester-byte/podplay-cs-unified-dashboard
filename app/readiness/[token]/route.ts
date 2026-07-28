@@ -143,6 +143,7 @@ input:disabled, select:disabled, textarea:disabled { background: #eef1f6; color:
     <span class="pct" id="barPct">0% ready</span>
     <span class="save-status" id="saveStatus"></span>
     <button class="primary" onclick="window.print()">Export PDF</button>
+    ${isInternal ? '<button onclick="copyLink(this)">Copy link</button>' : ""}
     ${isInternal ? '<button class="danger" onclick="clearAll()">Clear</button>' : ""}
   </div>
 
@@ -154,7 +155,7 @@ input:disabled, select:disabled, textarea:disabled { background: #eef1f6; color:
     <div class="gate-head"><h2>Club context</h2></div>
     <div class="fields">
       <div class="field"><label>Club name</label><input data-k="club_name" type="text" oninput="saveNow()"></div>
-      <div class="field"><label>Court / bay count</label><input data-k="courts" type="number" min="1" max="60" value="1" oninput="buildMatrix()"></div>
+      <div class="field"><label>Court / bay count</label><input data-k="courts" type="number" min="1" max="60" value="1" oninput="buildMatrix();saveNow()"></div>
     </div>
   </div>
 
@@ -486,6 +487,22 @@ function toggleQcNa(){
   saveNow();
 }
 
+// Copy this readiness form's link to the clipboard (internal control).
+function copyLink(btn){
+  const url=window.location.href;
+  const done=()=>{ if(btn){ const t=btn.textContent; btn.textContent="Copied!"; setTimeout(()=>{ btn.textContent=t; }, 1500); } };
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(url).then(done).catch(()=>fallbackCopy(url, done));
+  } else { fallbackCopy(url, done); }
+}
+function fallbackCopy(text, done){
+  const ta=document.createElement("textarea");
+  ta.value=text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.focus(); ta.select();
+  try{ document.execCommand("copy"); }catch(e){}
+  document.body.removeChild(ta); if(done) done();
+}
+
 function clearAll(){
   if(!confirm("Clear all entries and reset this document? This cannot be undone.")) return;
   state={};
@@ -525,6 +542,9 @@ function applyLock(){
 // INIT
 (async function init(){
   state = await fetchState();
+  // Adopt the saved court/bay count into the input BEFORE building the matrix,
+  // so the grid loads at the right size (restore() runs after the build).
+  if(state.courts){ const c=document.querySelector('[data-k="courts"]'); if(c) c.value=state.courts; }
   renderGates();
   renderExtras();
   buildMatrix();
