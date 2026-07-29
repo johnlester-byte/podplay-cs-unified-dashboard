@@ -227,12 +227,34 @@ function BoxGroupCell({
     <div className="space-y-1 text-xs">
       {cells.map((b) => {
         const raw = kind === "shipped" ? b.shipped : b.delivered;
+        const url = kind === "shipped" ? b.shippedUrl : b.deliveredUrl;
         const tier = kind === "shipped" ? boxShippedTier(record, b.index) : boxDeliveredTier(record, b.index);
-        const display = isNa(raw) ? (kind === "shipped" ? "not shipped" : "not delivered") : formatFlexDate(raw);
+        const hasDate = !isNa(raw);
+        const display = hasDate ? formatFlexDate(raw) : kind === "shipped" ? "not shipped" : "not delivered";
+        const tierClass = tier ? OPENING_TIER_TEXT_CLASS[tier] : "";
         return (
           <div key={b.index} className="flex items-center justify-between gap-3">
             <span className="text-muted-foreground">Box {b.index}</span>
-            <span className={tier ? OPENING_TIER_TEXT_CLASS[tier] : ""}>{display}</span>
+            {/* Only a cell with a real date AND a native sheet link becomes an
+                anchor (e.g. UPS tracking); stopPropagation keeps the row's
+                detail-sheet click from also firing. No link -> plain text. */}
+            {hasDate && url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  "inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:decoration-solid",
+                  tierClass
+                )}
+              >
+                {display}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <span className={tierClass}>{display}</span>
+            )}
           </div>
         );
       })}

@@ -6,7 +6,7 @@ import { toast } from "sonner";
 
 import { createClient } from "@/lib/supabase/client";
 import { formatDate, isFollowUpOverdue, openReadinessChecklist } from "@/lib/client-hub";
-import { OPENING_TIER_TEXT_CLASS } from "@/lib/opening-date-status";
+import { OPENING_TIER_TEXT_CLASS, type OpeningDateTier } from "@/lib/opening-date-status";
 import { boxDeliveredTier, boxShippedTier, getBoxCells, isNa, parseFlexDate } from "@/lib/tracker-mrp";
 import { computeRowFlags } from "@/lib/tracker-flags";
 import type { MrpRecord } from "@/lib/mrp";
@@ -50,6 +50,45 @@ function formatFlex(value: string | null): string {
   const d = parseFlexDate(value);
   if (!d) return value ?? "—";
   return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+// A single box Shipped/Delivered value. When the sheet cell carries a native
+// hyperlink (e.g. UPS tracking) and holds a real date, render it as an anchor
+// with an external-link icon; otherwise plain text (Session 19B).
+function BoxDateValue({
+  label,
+  raw,
+  url,
+  tier,
+}: {
+  label: string;
+  raw: string | null;
+  url: string | null;
+  tier: OpeningDateTier;
+}) {
+  const tierClass = tier ? OPENING_TIER_TEXT_CLASS[tier] : "text-sidebar-foreground";
+  if (isNa(raw)) {
+    return <span className={tierClass}>{label}: —</span>;
+  }
+  const text = formatFlex(raw);
+  if (!url) {
+    return (
+      <span className={tierClass}>
+        {label}: {text}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:decoration-solid ${tierClass}`}
+    >
+      {label}: {text}
+      <ExternalLink className="h-3 w-3" />
+    </a>
+  );
 }
 
 export function ClientDetailSheet({
@@ -288,12 +327,8 @@ export function ClientDetailSheet({
                     <div key={b.index} className="flex items-center justify-between gap-3">
                       <span className="text-sidebar-foreground/70">Box {b.index}</span>
                       <span className="flex gap-3">
-                        <span className={shipTier ? OPENING_TIER_TEXT_CLASS[shipTier] : "text-sidebar-foreground"}>
-                          Shipped: {isNa(b.shipped) ? "—" : formatFlex(b.shipped)}
-                        </span>
-                        <span className={delTier ? OPENING_TIER_TEXT_CLASS[delTier] : "text-sidebar-foreground"}>
-                          Delivered: {isNa(b.delivered) ? "—" : formatFlex(b.delivered)}
-                        </span>
+                        <BoxDateValue label="Shipped" raw={b.shipped} url={b.shippedUrl} tier={shipTier} />
+                        <BoxDateValue label="Delivered" raw={b.delivered} url={b.deliveredUrl} tier={delTier} />
                       </span>
                     </div>
                   );
