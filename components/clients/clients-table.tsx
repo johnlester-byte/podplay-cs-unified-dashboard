@@ -216,9 +216,32 @@ function BoxGroupCell({
   const label = kind === "shipped" ? "Shipped" : "Delivered";
 
   if (!expanded) {
+    // Even collapsed, expose each linked box as a clickable tracking icon next to
+    // the N/M fraction so a CSA doesn't have to expand the column first. One icon
+    // per applicable box that has a real date AND a native sheet link for this kind.
+    const linked = cells
+      .map((b) => ({
+        index: b.index,
+        raw: kind === "shipped" ? b.shipped : b.delivered,
+        url: kind === "shipped" ? b.shippedUrl : b.deliveredUrl,
+      }))
+      .filter((c) => c.url && !isNa(c.raw));
     return (
-      <span className={alert ? OPENING_TIER_TEXT_CLASS[alert] : ""}>
+      <span className={cn("inline-flex items-center gap-1", alert ? OPENING_TIER_TEXT_CLASS[alert] : "")}>
         {summary.done}/{summary.total} {label}
+        {linked.map((c) => (
+          <a
+            key={c.index}
+            href={c.url as string}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Box ${c.index} ${label.toLowerCase()} — open tracking`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ))}
       </span>
     );
   }
