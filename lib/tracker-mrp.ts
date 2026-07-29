@@ -46,6 +46,10 @@ export interface BoxCell {
   index: number; // 1-based box number
   shipped: string | null;
   delivered: string | null;
+  // Native cell hyperlink (e.g. UPS tracking) on the matching date cell, null
+  // when that cell carries no link. Carried through from MrpRecord (Session 19B).
+  shippedUrl: string | null;
+  deliveredUrl: string | null;
   // A box "exists" for a club unless BOTH its shipped and delivered cells are N/A.
   applicable: boolean;
 }
@@ -53,9 +57,27 @@ export interface BoxCell {
 export function getBoxCells(record: MrpRecord | null): BoxCell[] {
   if (!record) return [];
   const raw = [
-    { index: 1, shipped: record.ppHardwareBox1Shipped, delivered: record.ppHardwareBox1Delivered },
-    { index: 2, shipped: record.ppHardwareBox2Shipped, delivered: record.ppHardwareBox2Delivered },
-    { index: 3, shipped: record.ppHardwareBox3Shipped, delivered: record.ppHardwareBox3Delivered },
+    {
+      index: 1,
+      shipped: record.ppHardwareBox1Shipped,
+      delivered: record.ppHardwareBox1Delivered,
+      shippedUrl: record.ppHardwareBox1ShippedUrl,
+      deliveredUrl: record.ppHardwareBox1DeliveredUrl,
+    },
+    {
+      index: 2,
+      shipped: record.ppHardwareBox2Shipped,
+      delivered: record.ppHardwareBox2Delivered,
+      shippedUrl: record.ppHardwareBox2ShippedUrl,
+      deliveredUrl: record.ppHardwareBox2DeliveredUrl,
+    },
+    {
+      index: 3,
+      shipped: record.ppHardwareBox3Shipped,
+      delivered: record.ppHardwareBox3Delivered,
+      shippedUrl: record.ppHardwareBox3ShippedUrl,
+      deliveredUrl: record.ppHardwareBox3DeliveredUrl,
+    },
   ];
   return raw.map((b) => ({
     ...b,

@@ -216,9 +216,32 @@ function BoxGroupCell({
   const label = kind === "shipped" ? "Shipped" : "Delivered";
 
   if (!expanded) {
+    // Even collapsed, expose each linked box as a clickable tracking icon next to
+    // the N/M fraction so a CSA doesn't have to expand the column first. One icon
+    // per applicable box that has a real date AND a native sheet link for this kind.
+    const linked = cells
+      .map((b) => ({
+        index: b.index,
+        raw: kind === "shipped" ? b.shipped : b.delivered,
+        url: kind === "shipped" ? b.shippedUrl : b.deliveredUrl,
+      }))
+      .filter((c) => c.url && !isNa(c.raw));
     return (
-      <span className={alert ? OPENING_TIER_TEXT_CLASS[alert] : ""}>
+      <span className={cn("inline-flex items-center gap-1", alert ? OPENING_TIER_TEXT_CLASS[alert] : "")}>
         {summary.done}/{summary.total} {label}
+        {linked.map((c) => (
+          <a
+            key={c.index}
+            href={c.url as string}
+            target="_blank"
+            rel="noopener noreferrer"
+            title={`Box ${c.index} ${label.toLowerCase()} — open tracking`}
+            onClick={(e) => e.stopPropagation()}
+            className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        ))}
       </span>
     );
   }
@@ -227,12 +250,34 @@ function BoxGroupCell({
     <div className="space-y-1 text-xs">
       {cells.map((b) => {
         const raw = kind === "shipped" ? b.shipped : b.delivered;
+        const url = kind === "shipped" ? b.shippedUrl : b.deliveredUrl;
         const tier = kind === "shipped" ? boxShippedTier(record, b.index) : boxDeliveredTier(record, b.index);
-        const display = isNa(raw) ? (kind === "shipped" ? "not shipped" : "not delivered") : formatFlexDate(raw);
+        const hasDate = !isNa(raw);
+        const display = hasDate ? formatFlexDate(raw) : kind === "shipped" ? "not shipped" : "not delivered";
+        const tierClass = tier ? OPENING_TIER_TEXT_CLASS[tier] : "";
         return (
           <div key={b.index} className="flex items-center justify-between gap-3">
             <span className="text-muted-foreground">Box {b.index}</span>
-            <span className={tier ? OPENING_TIER_TEXT_CLASS[tier] : ""}>{display}</span>
+            {/* Only a cell with a real date AND a native sheet link becomes an
+                anchor (e.g. UPS tracking); stopPropagation keeps the row's
+                detail-sheet click from also firing. No link -> plain text. */}
+            {hasDate && url ? (
+              <a
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className={cn(
+                  "inline-flex items-center gap-1 underline decoration-dotted underline-offset-2 hover:decoration-solid",
+                  tierClass
+                )}
+              >
+                {display}
+                <ExternalLink className="h-3 w-3" />
+              </a>
+            ) : (
+              <span className={tierClass}>{display}</span>
+            )}
           </div>
         );
       })}

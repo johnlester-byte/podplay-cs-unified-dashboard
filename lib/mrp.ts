@@ -15,6 +15,15 @@
 //     the Session 6 two-candidate ambiguity is resolved: there is one such column.
 //   - "Progress Bar" is intentionally excluded (visual-only in the sheet).
 // Never call any write/update/append Sheets API method from this file.
+//
+// Session 19B: the box Shipped/Delivered date cells carry NATIVE cell hyperlinks
+// (Insert > Link — confirmed live: 218 such cells, all UPS tracking URLs; zero
+// =HYPERLINK() formula cells, zero rich-text-run links). values.get returns cell
+// VALUES only and cannot surface link metadata, so the read switched to a single
+// spreadsheets.get grid call that returns both formattedValue (same display text
+// values.get gave) AND the per-cell hyperlink. One call replaces one call — a
+// quota wash at the same hourly + manual-refresh cadence. Link extraction is
+// scoped to the 6 box columns (the only ones confirmed linked).
 
 import { google } from "googleapis";
 import { IntegrationPausedError, markRefreshed, recordCall, shouldAllowPoll, type PollTrigger } from "@/lib/api-health";
@@ -46,6 +55,16 @@ export interface MrpRecord {
   ppHardwareBox2Delivered: string | null;
   ppHardwareBox3Shipped: string | null;
   ppHardwareBox3Delivered: string | null;
+  // Native cell hyperlink (e.g. a UPS tracking URL) on the matching box date
+  // cell, or null when that cell carries no link. Additive to the plain-value
+  // fields above — a link can be added/removed in the sheet over time, so each
+  // hourly/manual refresh re-derives these from the current grid.
+  ppHardwareBox1ShippedUrl: string | null;
+  ppHardwareBox1DeliveredUrl: string | null;
+  ppHardwareBox2ShippedUrl: string | null;
+  ppHardwareBox2DeliveredUrl: string | null;
+  ppHardwareBox3ShippedUrl: string | null;
+  ppHardwareBox3DeliveredUrl: string | null;
   dropship1Ordered: string | null;
   dropship1Delivered: string | null;
   dropship2Ordered: string | null;
@@ -79,12 +98,22 @@ interface SheetsApiError {
   message?: string;
 }
 
-async function fetchRows(trigger: PollTrigger): Promise<string[][]> {
+// Grid read: cell display values plus per-cell native hyperlinks, positionally
+// aligned (values[r][c] and links[r][c] describe the same cell). Trailing empty
+// cells/rows are omitted by the API exactly as values.get omitted them, so the
+// downstream index-based lookups (cell()/linkCell()) are unchanged.
+interface SheetGrid {
+  values: string[][];
+  links: (string | null)[][];
+}
+
+async function fetchGrid(trigger: PollTrigger): Promise<SheetGrid> {
   const allowed = await shouldAllowPoll("mrp_sheets", trigger);
   if (!allowed) {
     throw new IntegrationPausedError("MRP sheet polling is currently paused by an admin.");
   }
 
+  const empty: SheetGrid = { values: [], links: [] };
   const sheetId = process.env.MRP_SHEET_ID;
   const auth = getAuthClient();
   if (!sheetId || !auth) {
@@ -92,15 +121,24 @@ async function fetchRows(trigger: PollTrigger): Promise<string[][]> {
       success: false,
       errorMessage: "MRP_SHEET_ID or Google Sheets service account credentials are not configured.",
     });
-    return [];
+    return empty;
   }
 
   try {
     const sheets = google.sheets({ version: "v4", auth });
-    const res = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: RANGE });
+    // formattedValue = the same display string values.get returned; hyperlink =
+    // the native cell link (null when absent). fields keeps the response lean.
+    const res = await sheets.spreadsheets.get({
+      spreadsheetId: sheetId,
+      ranges: [RANGE],
+      fields: "sheets.data.rowData.values(formattedValue,hyperlink)",
+    });
     await recordCall("mrp_sheets", { success: true });
     await markRefreshed("mrp_sheets");
-    return res.data.values ?? [];
+    const rowData = res.data.sheets?.[0]?.data?.[0]?.rowData ?? [];
+    const values = rowData.map((r) => (r.values ?? []).map((c) => c.formattedValue ?? ""));
+    const links = rowData.map((r) => (r.values ?? []).map((c) => c.hyperlink ?? null));
+    return { values, links };
   } catch (err) {
     const e = err as SheetsApiError;
     const status = e.code ?? e.status ?? e.response?.status;
@@ -119,7 +157,7 @@ async function fetchRows(trigger: PollTrigger): Promise<string[][]> {
     }
     // Never throw — the rest of the app (sync chain, detail sheet) keeps
     // working with an empty result set on any Sheets API failure.
-    return [];
+    return empty;
   }
 }
 
@@ -128,6 +166,16 @@ function cell(row: string[], i: number): string | null {
   const v = row[i];
   if (v === undefined || v === null) return null;
   const t = String(v).trim();
+  return t === "" ? null : t;
+}
+
+// Native hyperlink on a cell, or null. Empty string / whitespace URLs collapse
+// to null so a stray link never produces a dead anchor downstream.
+function linkCell(links: (string | null)[], i: number): string | null {
+  if (i < 0) return null;
+  const v = links[i];
+  if (!v) return null;
+  const t = v.trim();
   return t === "" ? null : t;
 }
 
@@ -142,7 +190,7 @@ function detectHeaderRow(rows: string[][]): number {
 }
 
 export async function getHardwareRecords(trigger: PollTrigger = "auto"): Promise<MrpRecord[]> {
-  const rows = await fetchRows(trigger);
+  const { values: rows, links } = await fetchGrid(trigger);
   const headerRow = detectHeaderRow(rows);
   if (headerRow === -1) return [];
 
@@ -192,10 +240,13 @@ export async function getHardwareRecords(trigger: PollTrigger = "auto"): Promise
     inventoryCheck: idx("inventory check"),
   };
 
+  // Zip each data row with its positionally-aligned link row so the box URL
+  // lookups stay correct after the club-name filter drops empty rows.
   return rows
     .slice(headerRow + 1)
-    .filter((row) => cell(row, clubCol))
-    .map((row) => ({
+    .map((row, i) => ({ row, link: links[headerRow + 1 + i] ?? [] }))
+    .filter(({ row }) => cell(row, clubCol))
+    .map(({ row, link }) => ({
       club: cell(row, clubCol) as string,
       customer: cell(row, customerCol),
       tier: cell(row, col.tier),
@@ -221,6 +272,12 @@ export async function getHardwareRecords(trigger: PollTrigger = "auto"): Promise
       ppHardwareBox2Delivered: cell(row, col.ppHardwareBox2Delivered),
       ppHardwareBox3Shipped: cell(row, col.ppHardwareBox3Shipped),
       ppHardwareBox3Delivered: cell(row, col.ppHardwareBox3Delivered),
+      ppHardwareBox1ShippedUrl: linkCell(link, col.ppHardwareBox1Shipped),
+      ppHardwareBox1DeliveredUrl: linkCell(link, col.ppHardwareBox1Delivered),
+      ppHardwareBox2ShippedUrl: linkCell(link, col.ppHardwareBox2Shipped),
+      ppHardwareBox2DeliveredUrl: linkCell(link, col.ppHardwareBox2Delivered),
+      ppHardwareBox3ShippedUrl: linkCell(link, col.ppHardwareBox3Shipped),
+      ppHardwareBox3DeliveredUrl: linkCell(link, col.ppHardwareBox3Delivered),
       dropship1Ordered: cell(row, col.dropship1Ordered),
       dropship1Delivered: cell(row, col.dropship1Delivered),
       dropship2Ordered: cell(row, col.dropship2Ordered),
