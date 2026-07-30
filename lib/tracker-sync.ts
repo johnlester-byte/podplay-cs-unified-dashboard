@@ -24,7 +24,7 @@ import { matchNames, type MrpRecord } from "@/lib/mrp";
 import { parseFlexDate, isNa } from "@/lib/tracker-mrp";
 import { mapOnboardingToLocation, deriveImportStatus } from "@/lib/track-opening-map";
 import type { HubspotOwner } from "@/lib/hubspot";
-import type { Location } from "@/lib/types";
+import type { Location, LocationStatus } from "@/lib/types";
 import type { PipelineDeals } from "@/lib/onboarding-deals";
 import type { OnboardingListItem } from "@/components/onboarding/onboarding-types";
 
@@ -228,27 +228,44 @@ export async function runTrackerImportSync(
       if (existing) {
         // Ongoing HubSpot stage -> status sync. Only act when the stage has
         // CHANGED since we last saw it (hs_stage_seen), so a manual status edit
-        // made between stage changes is preserved (manual override wins). Only
-        // the terminal buckets are auto-applied — Completed and Archived — so an
-        // active-tab manual status (on-track/at-risk/delayed) is never clobbered.
+        // made between stage changes is preserved (manual override wins).
+        //
+        // The status is auto-applied ONLY when a terminal bucket is on either
+        // side of the change — moving INTO Completed/MIA, or back OUT of them:
+        //   - Completed stage        -> "completed"
+        //   - MIA/No Response stage  -> "archived"
+        //   - any other (active) stage, when the record is CURRENTLY terminal
+        //     (i.e. HubSpot moved it back out of Completed/MIA): un-stick it to
+        //       "opened"   if its post-open follow-up is already done (club live),
+        //       "on-track" otherwise (back in the active pipeline).
+        // A change purely between active stages never overwrites a manual
+        // on-track/at-risk/delayed edit — that stays user-owned.
         const stageId = deal.properties.hs_pipeline_stage ?? "";
         if (stageId && existing.hs_stage_seen !== stageId) {
           const derived = deriveImportStatus(deal); // archived | completed | on-track
+          const target: LocationStatus =
+            derived === "completed" || derived === "archived"
+              ? derived
+              : existing.post_open_done
+                ? "opened"
+                : "on-track";
+          const isTerminal = (s: LocationStatus) => s === "completed" || s === "archived";
+          const applyStatus =
+            existing.status !== target && (isTerminal(target) || isTerminal(existing.status));
           const upd: Record<string, string> = { hs_stage_seen: stageId };
-          const applyStatus = (derived === "completed" || derived === "archived") && existing.status !== derived;
-          if (applyStatus) upd.status = derived;
+          if (applyStatus) upd.status = target;
 
           const { error: e } = await admin.from("locations").update(upd as never).eq("id", existing.id);
           if (!e) {
             existing.hs_stage_seen = stageId;
             result.statusSynced++;
             if (applyStatus) {
-              existing.status = derived;
+              existing.status = target;
               await admin.from("activity_log").insert({
                 user_email: actorEmail,
                 action: "updated",
                 entity: existing.name,
-                details: `Status set to "${derived}" from HubSpot stage change`,
+                details: `Status set to "${target}" from HubSpot stage change`,
               } as never);
             }
           }
