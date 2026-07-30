@@ -107,6 +107,9 @@ function daysBetween(from: Date, to: Date): number {
 //   - delivery date already past           -> "overdue" (red)
 //   - delivery date today or within 3 days  -> "late"    (amber)
 //   - otherwise                              -> null
+// A box that already has a DELIVERED date is never flagged for a missing shipped
+// date: it plainly shipped to have been delivered, so an empty shipped cell there
+// is just an un-logged sheet field, not a real "not yet shipped" problem.
 export function boxShippedTier(
   record: MrpRecord | null,
   boxIndex: number,
@@ -117,6 +120,7 @@ export function boxShippedTier(
   if (!hwd) return null;
   const box = getBoxCells(record).find((b) => b.index === boxIndex);
   if (!box || !box.applicable || !isNa(box.shipped)) return null;
+  if (!isNa(box.delivered)) return null; // already delivered -> shipped is moot
   const daysUntil = daysBetween(today, hwd);
   if (daysUntil < 0) return "overdue";
   if (daysUntil <= 3) return "late";

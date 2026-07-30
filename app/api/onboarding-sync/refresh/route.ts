@@ -9,23 +9,28 @@ import { runTrackerImportSync } from "@/lib/tracker-sync";
 import { runFieldSync } from "@/lib/tracker-field-sync";
 
 export const dynamic = "force-dynamic";
-// maxDuration is honored on paid Vercel plans; the production project is on
-// Hobby (hard 10s cap regardless of this value). The manual refresh is kept
-// under that cap by (a) rebuilding ONLY the viewed pipeline, (b) reusing the
+// maxDuration is honored on paid Vercel plans; prod is now on Vercel Pro, so
+// this 60s applies (was inert under the old Hobby 10s cap). The manual refresh
+// is still kept lean by (a) rebuilding ONLY the viewed pipeline, (b) reusing the
 // prior snapshot's enrichment so the HubSpot rebuild is a single search call
 // (see refreshPipelineSnapshot), (c) running the HubSpot and MRP refreshes
 // concurrently below rather than back-to-back, and (d) 17E — capping the import
 // sweep and field-sync at a LOWER per-tick write budget than the hourly cron, so
-// a single user click always finishes well under 10s even under heavy backlog
-// (the remainder drains on the next cron tick, both are idempotent).
+// a single user click finishes in seconds, not near the ceiling, even under
+// heavy backlog (the remainder drains on the next cron tick, both idempotent).
 export const maxDuration = 60;
 
-// 17E — per-tick write budget for the MANUAL refresh path only. The hourly cron
-// keeps its own 25/tick default (it has a full hour to drain a backlog); a user
-// click has ~10s, so it takes a smaller bite and lets cron catch up the rest.
-// Worst case here: ~10 import writes + ~10 field-sync writes, each 2 DB round
-// trips (UPDATE + activity_log), plus the HubSpot search — comfortably under cap.
-const MANUAL_REFRESH_MAX_WRITES = 10;
+// Per-tick write budget for the MANUAL refresh path only. Bounded separately
+// from the cron so an interactive user isn't left waiting on a huge batch.
+//
+// Session 20 — raised 10 -> 25 for Vercel Pro. The old 10 was sized to keep a
+// click well under Hobby's hard 10s cap (17E); prod is now Pro (60s), so the
+// interactive path gets real room while still taking a smaller bite than the
+// cron so the browser user isn't waiting near a minute — the client abort
+// (onboarding-grid.tsx) was widened to 30s to match. Worst case: ~25 import
+// writes + ~25 field-sync writes, each 2 DB round trips, plus the single
+// HubSpot search — comfortably inside 30s, far under the 60s ceiling.
+const MANUAL_REFRESH_MAX_WRITES = 25;
 
 // Stage timing: this route has accumulated sequential stages across 17A/17B/17D,
 // and a platform timeout kills the function with NO response, so a silent slow
