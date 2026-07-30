@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
-const STATUS_OPTIONS: LocationStatus[] = ["on-track", "at-risk", "delayed", "opened"];
+const STATUS_OPTIONS: LocationStatus[] = ["on-track", "at-risk", "delayed", "opened", "completed", "archived"];
 
 interface StatusQuickEditProps {
   location: Location;

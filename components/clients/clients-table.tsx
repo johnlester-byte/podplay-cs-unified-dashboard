@@ -89,7 +89,7 @@ import { ClientDetailSheet } from "@/components/clients/client-detail-sheet";
 import { ClientFormDialog } from "@/components/clients/client-form-dialog";
 import { DeleteClientDialog } from "@/components/clients/delete-client-dialog";
 
-type Tab = "active" | "opened";
+type Tab = "active" | "opened" | "completed" | "archived";
 
 interface ClientsTableProps {
   initialLocations: Location[];
@@ -122,6 +122,8 @@ const STATUS_SORT_RANK: Record<LocationStatus, number> = {
   "at-risk": 1,
   delayed: 2,
   opened: 3,
+  completed: 4,
+  archived: 5,
 };
 
 type StatKey =
@@ -363,9 +365,17 @@ export function ClientsTable({
     return map;
   }, [locations, mrpByLocation]);
 
-  const activeRows = React.useMemo(() => locations.filter((l) => l.status !== "opened"), [locations]);
+  // Active = still being worked (not opened/completed/archived). The other three
+  // are terminal states, each its own tab.
+  const activeRows = React.useMemo(
+    () => locations.filter((l) => l.status !== "opened" && l.status !== "completed" && l.status !== "archived"),
+    [locations]
+  );
   const openedRows = React.useMemo(() => locations.filter((l) => l.status === "opened"), [locations]);
-  const tabRows = tab === "opened" ? openedRows : activeRows;
+  const completedRows = React.useMemo(() => locations.filter((l) => l.status === "completed"), [locations]);
+  const archivedRows = React.useMemo(() => locations.filter((l) => l.status === "archived"), [locations]);
+  const tabRows =
+    tab === "opened" ? openedRows : tab === "completed" ? completedRows : tab === "archived" ? archivedRows : activeRows;
 
   // Dropdown options are scoped to the CURRENT tab's rows only — a value that
   // lives solely on the other tab (e.g. an opened-only client) never appears.
@@ -550,18 +560,18 @@ export function ClientsTable({
         id: "date",
         header: ({ column }) => (
           <SortableHeader
-            label={tab === "opened" ? "Opened Date" : "Opening Date"}
+            label={tab === "active" ? "Opening Date" : "Opened Date"}
             sorted={column.getIsSorted()}
             onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
           />
         ),
-        accessorFn: (l) => (tab === "opened" ? l.opened_date : l.opening_date),
+        accessorFn: (l) => (tab === "active" ? l.opening_date : l.opened_date),
         cell: ({ row }) => {
           const l = row.original;
-          const dateStr = tab === "opened" ? l.opened_date : l.opening_date;
+          const dateStr = tab === "active" ? l.opening_date : l.opened_date;
           if (tab === "active" && !dateStr) return <MissingMark />;
           const relative = formatRelativeDays(dateStr);
-          const tier = tab === "opened" ? null : flagsByLocation[l.id]?.openingTier ?? null;
+          const tier = tab === "active" ? flagsByLocation[l.id]?.openingTier ?? null : null;
           return (
             <div>
               <div className={tier ? OPENING_TIER_TEXT_CLASS[tier] : ""}>
@@ -583,7 +593,7 @@ export function ClientsTable({
           const l = row.original;
           if (l.presale_date) return formatDate(l.presale_date);
           if (l.presale_date_na) return <span className="text-muted-foreground">N/A</span>;
-          return l.status === "opened" ? "—" : <MissingMark />;
+          return tab === "active" ? <MissingMark /> : <span className="text-muted-foreground">—</span>;
         },
       },
       {
@@ -601,7 +611,7 @@ export function ClientsTable({
           if (!hw.value) {
             // Only required (non-Basic) active rows get the red missing nudge;
             // Basic (+) shows a plain dash.
-            const needsFlag = row.original.status !== "opened" && (f?.hardwareRequired ?? true);
+            const needsFlag = tab === "active" && (f?.hardwareRequired ?? true);
             return needsFlag ? <MissingMark /> : <span className="text-muted-foreground">—</span>;
           }
           return (
@@ -846,10 +856,21 @@ export function ClientsTable({
             </div>
           </div>
         </>
-      ) : (
+      ) : tab === "opened" ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           <StatCard compact label="Total Opened" value={openedRows.length} icon={CheckCircle2} active={statFilter === null} onClick={() => handleStatCard("total-opened")} />
           <StatCard compact label="Opened This Month" value={count("opened-month")} icon={CheckCircle2} active={statFilter === "opened-month"} onClick={() => handleStatCard("opened-month")} />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <StatCard
+            compact
+            label={tab === "completed" ? "Total Completed" : "Total Archived"}
+            value={tabRows.length}
+            icon={CheckCircle2}
+            active={statFilter === null}
+            onClick={() => setStatFilter(null)}
+          />
         </div>
       )}
 
@@ -857,6 +878,8 @@ export function ClientsTable({
         <TabsList>
           <TabsTrigger value="active">Active</TabsTrigger>
           <TabsTrigger value="opened">Opened</TabsTrigger>
+          <TabsTrigger value="completed">Completed</TabsTrigger>
+          <TabsTrigger value="archived">Archived</TabsTrigger>
         </TabsList>
       </Tabs>
 
@@ -950,9 +973,9 @@ export function ClientsTable({
                 .map((col) => {
                   const label =
                     col.id === "date"
-                      ? tab === "opened"
-                        ? "Opened Date"
-                        : "Opening Date"
+                      ? tab === "active"
+                        ? "Opening Date"
+                        : "Opened Date"
                       : COLUMN_LABELS[col.id] ?? col.id;
                   return (
                     <DropdownMenuCheckboxItem
@@ -1037,8 +1060,8 @@ export function ClientsTable({
             const l = row.original;
             const f = flagsByLocation[l.id];
             const attention = tab === "active" && !!f?.needsAttention;
-            const dateStr = tab === "opened" ? l.opened_date : l.opening_date;
-            const dateTier = tab === "opened" ? null : f?.openingTier ?? null;
+            const dateStr = tab === "active" ? l.opening_date : l.opened_date;
+            const dateTier = tab === "active" ? f?.openingTier ?? null : null;
             const overdue = isFollowUpOverdue(l);
             const pct = readinessByLocation[l.id]?.pct ?? 0;
             return (
@@ -1069,7 +1092,7 @@ export function ClientsTable({
                     <div>{l.tier || "—"}</div>
                   </div>
                   <div>
-                    <span className="text-xs text-muted-foreground">{tab === "opened" ? "Opened" : "Opening"}</span>
+                    <span className="text-xs text-muted-foreground">{tab === "active" ? "Opening" : "Opened"}</span>
                     <div className={dateTier ? OPENING_TIER_TEXT_CLASS[dateTier] : ""}>
                       {dateStr ? formatDate(dateStr) : tab === "active" ? <MissingMark /> : "—"}
                     </div>

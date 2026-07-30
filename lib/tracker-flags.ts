@@ -41,7 +41,8 @@ export function computeRowFlags(
   mrp: MrpRecord | null,
   today: Date = startOfDay(new Date())
 ): RowFlags {
-  const completed = location.status === "opened";
+  const completed =
+    location.status === "opened" || location.status === "completed" || location.status === "archived";
   // Basic (+) clubs don't ship the full hardware kit — hardware dates aren't
   // required there, so an empty hardware delivery is NOT flagged. Hardware alerts
   // only apply once a date is actually pulled from MRP or entered manually.

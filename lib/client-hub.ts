@@ -6,17 +6,26 @@ export const STATUS_LABEL: Record<LocationStatus, string> = {
   "at-risk": "At Risk",
   delayed: "Delayed",
   opened: "Opened",
+  completed: "Completed",
+  archived: "Archived",
 };
 
-export const STATUS_BADGE_VARIANT: Record<LocationStatus, "default" | "amber" | "destructive" | "blue"> = {
+export const STATUS_BADGE_VARIANT: Record<
+  LocationStatus,
+  "default" | "amber" | "destructive" | "blue" | "green" | "secondary"
+> = {
   "on-track": "default",
   "at-risk": "amber",
   delayed: "destructive",
   opened: "blue",
+  completed: "green",
+  archived: "secondary",
 };
 
 export function isFollowUpOverdue(location: Location): boolean {
-  if (location.status === "opened" || !location.opening_date) return false;
+  // Only active openings can be follow-up overdue — opened/completed/archived are done.
+  if (location.status !== "on-track" && location.status !== "at-risk" && location.status !== "delayed") return false;
+  if (!location.opening_date) return false;
   const opening = parseDateOnly(location.opening_date);
   if (!opening) return false;
   const today = new Date();
@@ -28,7 +37,8 @@ export function isFollowUpOverdue(location: Location): boolean {
 
 // This calendar week, Monday–Sunday (not a rolling 7-day window).
 export function isOpeningThisWeek(location: Location): boolean {
-  if (location.status === "opened" || !location.opening_date) return false;
+  if (location.status === "opened" || location.status === "completed" || location.status === "archived") return false;
+  if (!location.opening_date) return false;
   const opening = parseDateOnly(location.opening_date);
   if (!opening) return false;
   const today = new Date();
@@ -52,7 +62,9 @@ export function isOpenedThisMonth(location: Location): boolean {
 
 export function computeClientStats(locations: Location[]) {
   return {
-    totalActive: locations.filter((l) => l.status !== "opened").length,
+    totalActive: locations.filter(
+      (l) => l.status === "on-track" || l.status === "at-risk" || l.status === "delayed"
+    ).length,
     atRisk: locations.filter((l) => l.status === "at-risk").length,
     openingThisWeek: locations.filter(isOpeningThisWeek).length,
     followUpsOverdue: locations.filter(isFollowUpOverdue).length,

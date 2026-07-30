@@ -31,17 +31,19 @@ export interface MappedOnboarding {
   opening_date: string | null;
 }
 
-// Auto-import stage -> tracker status mapping (per user, Session 15B):
-//   closed/completed stage -> "opened"
-//   MIA/No Response stage  -> "at-risk"
-//   anything else          -> "on-track"
-// The manual Track Opening dialog always uses "on-track" and does not call this.
+// HubSpot onboarding stage -> tracker status mapping. Used both on auto-import
+// and by the ongoing stage-change sync (lib/tracker-sync.ts):
+//   "MIA/No Response" stage -> "archived"
+//   closed/"Completed" stage -> "completed"
+//   anything else            -> "on-track"
+// "Opened" (club went live) is a manual status the team sets — it is NOT derived
+// from HubSpot. The manual Track Opening dialog always uses "on-track".
 export function deriveImportStatus(deal: OnboardingListItem): LocationStatus {
   const pipeline = deal.properties.hs_pipeline ? getPipelineById(deal.properties.hs_pipeline) : undefined;
   const stage = pipeline?.stages.find((s) => s.id === deal.properties.hs_pipeline_stage);
   if (!stage) return "on-track";
-  if (stage.label === "MIA/No Response") return "at-risk";
-  if (stage.isClosed) return "opened";
+  if (stage.label === "MIA/No Response") return "archived";
+  if (stage.isClosed) return "completed";
   return "on-track";
 }
 
