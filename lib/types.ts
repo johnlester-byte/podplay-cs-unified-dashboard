@@ -1,4 +1,4 @@
-export type LocationStatus = "on-track" | "at-risk" | "delayed" | "opened";
+export type LocationStatus = "on-track" | "at-risk" | "delayed" | "opened" | "completed" | "archived";
 
 // Why a location shut down. Stored in locations.close_reason; a location is
 // considered "closed" once close_date is set.
@@ -34,6 +34,9 @@ export interface Location {
   csa_owner: string | null;
   hubspot_deal_id: string | null;
   mrp_row_key: string | null;
+  // Last HubSpot pipeline stage the status-sync acted on (022). Lets the sync
+  // apply Completed/Archived only when the stage changes, preserving manual edits.
+  hs_stage_seen: string | null;
 }
 
 // Closed Locations (020) — a standalone log of locations that shut down.

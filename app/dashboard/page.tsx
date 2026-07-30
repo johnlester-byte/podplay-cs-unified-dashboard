@@ -83,6 +83,8 @@ const STATUS_PILL: Record<LocationStatus, string> = {
   "at-risk": "bg-amber-500 text-white",
   delayed: "bg-destructive text-white",
   opened: "bg-blue-600 text-white",
+  completed: "bg-emerald-600 text-white",
+  archived: "bg-slate-500 text-white",
 };
 
 const BAR_COLOR: Record<LocationStatus, string> = {
@@ -90,6 +92,8 @@ const BAR_COLOR: Record<LocationStatus, string> = {
   "at-risk": "bg-amber-500",
   delayed: "bg-destructive",
   opened: "bg-blue-600",
+  completed: "bg-emerald-600",
+  archived: "bg-slate-500",
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -143,7 +147,8 @@ function computeUpcomingOpenings(
 
   return locations
     .filter((l) => {
-      if (l.status === "opened" || l.status === "delayed") return false;
+      if (l.status === "opened" || l.status === "delayed" || l.status === "completed" || l.status === "archived")
+        return false;
       if (!l.opening_date) return false;
       const t = dateOnlyToUtcMs(l.opening_date);
       if (t === null) return false;

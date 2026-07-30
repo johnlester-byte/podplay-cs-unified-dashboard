@@ -39,6 +39,7 @@ export interface TrackerSyncResult {
   importScanned: number;
   imported: number;
   trackerFilled: number; // existing linked rows whose blank tracker was set from the owner
+  statusSynced: number; // existing rows whose HubSpot stage changed (status may be updated)
   importCapped: boolean;
   importSkippedPaused: boolean;
   backfillScanned: number;
@@ -95,13 +96,14 @@ function buildImportPayload(deal: OnboardingListItem, trackerName: string | null
     name: m.name,
     tier: m.tier || null,
     opening_date: m.opening_date,
-    // Completed onboardings land on the Opened tab; give them an opened_date
-    // so they don't render as opened-with-no-date.
-    opened_date: status === "opened" ? m.opening_date : null,
+    // A completed onboarding gets an opened_date so it doesn't render dateless.
+    opened_date: status === "completed" ? m.opening_date : null,
     tracker: trackerName,
     status,
     notes: null,
     hubspot_deal_id: deal.id,
+    // Seed the stage we imported at, so the ongoing sync only re-acts on a change.
+    hs_stage_seen: deal.properties.hs_pipeline_stage ?? null,
     pre_open_done: false,
     post_open_done: false,
   };
@@ -177,6 +179,7 @@ export async function runTrackerImportSync(
     importScanned: 0,
     imported: 0,
     trackerFilled: 0,
+    statusSynced: 0,
     importCapped: false,
     importSkippedPaused: false,
     backfillScanned: 0,
@@ -201,9 +204,10 @@ export async function runTrackerImportSync(
 
     const inserted: Location[] = [];
     for (const deal of deals) {
-      // Combined write budget (inserts + tracker fills) so a large first-run
-      // backlog can't blow the Vercel Hobby 10s cap. Remainder drains next tick.
-      if (result.imported + result.trackerFilled >= maxImports) {
+      // Combined write budget (inserts + tracker fills + status syncs) so a large
+      // first-run backlog can't blow the Vercel Hobby 10s cap. Remainder drains
+      // on the next hourly tick (idempotent).
+      if (result.imported + result.trackerFilled + result.statusSynced >= maxImports) {
         result.importCapped = true;
         break;
       }
@@ -213,6 +217,34 @@ export async function runTrackerImportSync(
       const existing = findExistingLocation(deal, locations);
 
       if (existing) {
+        // Ongoing HubSpot stage -> status sync. Only act when the stage has
+        // CHANGED since we last saw it (hs_stage_seen), so a manual status edit
+        // made between stage changes is preserved (manual override wins). Only
+        // the terminal buckets are auto-applied — Completed and Archived — so an
+        // active-tab manual status (on-track/at-risk/delayed) is never clobbered.
+        const stageId = deal.properties.hs_pipeline_stage ?? "";
+        if (stageId && existing.hs_stage_seen !== stageId) {
+          const derived = deriveImportStatus(deal); // archived | completed | on-track
+          const upd: Record<string, string> = { hs_stage_seen: stageId };
+          const applyStatus = (derived === "completed" || derived === "archived") && existing.status !== derived;
+          if (applyStatus) upd.status = derived;
+
+          const { error: e } = await admin.from("locations").update(upd as never).eq("id", existing.id);
+          if (!e) {
+            existing.hs_stage_seen = stageId;
+            result.statusSynced++;
+            if (applyStatus) {
+              existing.status = derived;
+              await admin.from("activity_log").insert({
+                user_email: actorEmail,
+                action: "updated",
+                entity: existing.name,
+                details: `Status set to "${derived}" from HubSpot stage change`,
+              } as never);
+            }
+          }
+        }
+
         // Row already tracked — only backfill a BLANK tracker from the owner.
         if (trackerName && !existing.tracker) {
           const { error: e } = await admin

@@ -28,7 +28,10 @@ import {
 import { TrackingMultiSelect } from "@/components/shared/tracking-multi-select";
 import { Switch } from "@/components/ui/switch";
 
-const STATUS_OPTIONS: LocationStatus[] = ["on-track", "at-risk", "delayed", "opened"];
+const STATUS_OPTIONS: LocationStatus[] = ["on-track", "at-risk", "delayed", "opened", "completed", "archived"];
+// Statuses that keep the opened date / outcome (a location that's opened, then
+// completed or archived, still has a real opened date to preserve).
+const KEEPS_OPENED_FIELDS: LocationStatus[] = ["opened", "completed", "archived"];
 const TIER_OPTIONS = ["Basic (+)", "Pro/Auto (+)"];
 
 interface FormState {
@@ -138,8 +141,8 @@ export function ClientFormDialog({
         tracker: joinTracker(form.tracker),
         status: form.status,
         notes: form.notes || null,
-        opened_date: form.status === "opened" ? form.opened_date || null : null,
-        open_outcome: form.status === "opened" ? form.open_outcome || null : null,
+        opened_date: KEEPS_OPENED_FIELDS.includes(form.status) ? form.opened_date || null : null,
+        open_outcome: KEEPS_OPENED_FIELDS.includes(form.status) ? form.open_outcome || null : null,
       };
 
       // @supabase/ssr's createBrowserClient<Database> mistypes .update()/.insert() as `never`
@@ -327,7 +330,7 @@ export function ClientFormDialog({
             </Select>
           </div>
 
-          {form.status === "opened" && (
+          {KEEPS_OPENED_FIELDS.includes(form.status) && (
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1.5">
                 <Label htmlFor="opened_date">Opened Date</Label>

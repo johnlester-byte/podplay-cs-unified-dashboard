@@ -192,7 +192,8 @@ export function ClientDetailSheet({
   if (!location) return null;
 
   const overdue = isFollowUpOverdue(location);
-  const completed = location.status === "opened";
+  const completed =
+    location.status === "opened" || location.status === "completed" || location.status === "archived";
   const flags = computeRowFlags(location, mrpRecord);
   const openingTier = flags.openingTier;
   const hardware = flags.hardware;
@@ -306,7 +307,7 @@ export function ClientDetailSheet({
                 )
               }
             />
-            {location.status === "opened" && (
+            {completed && (
               <>
                 <Field label="Opened Date" value={formatDate(location.opened_date)} />
                 <Field label="Open Outcome" value={location.open_outcome} />
