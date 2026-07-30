@@ -211,15 +211,18 @@ export function OnboardingGrid({
   async function handleManualRefresh() {
     if (manualRefreshDisabled || isRefreshing) return;
     setIsRefreshing(true);
-    // 17E — the refresh route runs several sequential stages and prod is on
-    // Vercel Hobby (hard 10s function cap). A platform timeout kills the function
-    // with NO response, so the fetch would otherwise hang until the browser's own
-    // long default. Abort just past the cap and tell the CSA honestly that some
-    // changes may not have applied, rather than spinning silently. Work already
-    // committed server-side by earlier stages is safe (each stage is idempotent);
-    // the next refresh or the hourly cron finishes the rest.
+    // 17E — the refresh route runs several sequential stages. A platform timeout
+    // kills the function with NO response, so the fetch would otherwise hang
+    // until the browser's own long default. Abort past the server ceiling and
+    // tell the CSA honestly that some changes may not have applied, rather than
+    // spinning silently. Work already committed server-side by earlier stages is
+    // safe (each stage is idempotent); the next refresh or the cron finishes the
+    // rest. Session 20 — widened 11s -> 30s: prod is now Vercel Pro (60s cap, was
+    // Hobby's 10s), and the manual write budget rose to 25/stage, so a heavy
+    // click can legitimately run longer than the old Hobby-era 11s without being
+    // a real timeout. Still well under the 60s server ceiling.
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 11_000);
+    const timeoutId = setTimeout(() => controller.abort(), 30_000);
     try {
       const params = new URLSearchParams({ pipeline });
       if (owner !== "all") params.set("owner", owner);

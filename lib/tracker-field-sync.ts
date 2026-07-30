@@ -43,13 +43,15 @@ import type { OnboardingListItem } from "@/components/onboarding/onboarding-type
 
 type SharedField = (typeof SHARED_FIELDS)[number];
 
-// Cap real overwrites/fills per tick (locations touched) so a large first-run
-// drift can't blow the Vercel Hobby 10s cap. Baseline seeding is bulk (one
-// upsert) and not counted. Remainder drains next heartbeat (idempotent).
-// This is the CRON default (a full hour to drain incrementally). The manual
-// refresh path (17E) passes a lower cap so a single user click always finishes
-// well under 10s even under heavy backlog — see refresh route.
-const MAX_SYNC_WRITES_PER_TICK = 25;
+// Cap real overwrites/fills per tick (locations touched) so a large drift can't
+// blow the function timeout. Baseline seeding is bulk (one upsert) and not
+// counted. Remainder drains next heartbeat (idempotent).
+//
+// Session 20 — raised 25 -> 75 for Vercel Pro (was sized against Hobby's 10s cap
+// in 17E; prod is now Pro, 60s). DEFAULT used by the lightweight sync-only cron
+// (/api/cron/sync). The heavy /api/cron/refresh and the manual refresh pass
+// their own explicit lower caps — see those routes.
+const MAX_SYNC_WRITES_PER_TICK = 75;
 
 export interface FieldSyncResult {
   linkedScanned: number; // linked rows examined

@@ -28,12 +28,20 @@ import type { Location } from "@/lib/types";
 import type { PipelineDeals } from "@/lib/onboarding-deals";
 import type { OnboardingListItem } from "@/components/onboarding/onboarding-types";
 
-// Cap imports per tick so a large first-run backlog can't blow the Vercel Hobby
-// 10s cap. Remaining rows are picked up on the next heartbeat (idempotent).
-// This is the CRON default (a full hour to drain incrementally). The manual
-// refresh path (17E) passes a lower cap so a single user click always finishes
-// well under 10s even under heavy backlog — see refresh route.
-const MAX_IMPORTS_PER_TICK = 25;
+// Cap writes per tick so a large backlog can't blow the function timeout.
+// Remaining rows are picked up on the next heartbeat (idempotent).
+//
+// Session 20 — raised 25 -> 75 for Vercel Pro. The old 25 was sized against
+// Hobby's hard 10s cap (17E); prod is now on Pro (60s default via maxDuration).
+// This is the DEFAULT, used by the lightweight sync-only cron (/api/cron/sync,
+// :30 — no snapshot rebuild, ~3.5s base) which has ample headroom for 75 writes
+// under 60s. Two paths deliberately DON'T use this default:
+//   - the heavy /api/cron/refresh (:00) passes an explicit lower cap because it
+//     first rebuilds four external snapshots (~48s) and can't afford a big sync
+//     bite on top (see that route);
+//   - the manual refresh (17E) passes MANUAL_REFRESH_MAX_WRITES so an
+//     interactive user isn't left waiting — see refresh route.
+const MAX_IMPORTS_PER_TICK = 75;
 
 export interface TrackerSyncResult {
   importScanned: number;
@@ -205,8 +213,9 @@ export async function runTrackerImportSync(
     const inserted: Location[] = [];
     for (const deal of deals) {
       // Combined write budget (inserts + tracker fills + status syncs) so a large
-      // first-run backlog can't blow the Vercel Hobby 10s cap. Remainder drains
-      // on the next hourly tick (idempotent).
+      // backlog can't blow the function timeout. Remainder drains on the next
+      // tick (idempotent). Cap re-tuned for Vercel Pro in Session 20 — see
+      // MAX_IMPORTS_PER_TICK.
       if (result.imported + result.trackerFilled + result.statusSynced >= maxImports) {
         result.importCapped = true;
         break;

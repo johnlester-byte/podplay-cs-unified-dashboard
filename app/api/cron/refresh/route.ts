@@ -10,6 +10,14 @@ import { fetchOwnersLive, type PipelineKey } from "@/lib/hubspot";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+// Session 20 — this heavy path first rebuilds four external snapshots (~48s)
+// and THEN runs the sync, so it can't take a big sync bite on top without
+// risking the 60s Pro ceiling. Keep its sync cap conservative (the proven-safe
+// 25 that already ran this route to completion in 17A) even though the shared
+// DEFAULT rose to 75 for the lightweight :30 /api/cron/sync path — that offset
+// tick, not this one, is where a large backlog now clears fast.
+const REFRESH_SYNC_MAX_WRITES = 25;
+
 // Refreshes every DB snapshot the dashboard reads (onboarding deals per
 // pipeline + MRP records). Invoked by Supabase pg_cron every 60 minutes via
 // net.http_post with the shared secret header; also callable manually with the
@@ -47,7 +55,7 @@ async function runRefresh() {
   // data. Both halves are internally gated by shouldAllowPoll (Session 15C).
   let trackerSync: unknown = "error";
   try {
-    trackerSync = await runTrackerImportSync("system@cron");
+    trackerSync = await runTrackerImportSync("system@cron", REFRESH_SYNC_MAX_WRITES);
     out.trackerSync = "ok";
   } catch {
     out.trackerSync = "error";
@@ -58,7 +66,7 @@ async function runRefresh() {
   // HubSpot/MRP value flows through; an older one never reverts a tracker edit.
   let fieldSync: unknown = "error";
   try {
-    fieldSync = await runFieldSync("system@cron");
+    fieldSync = await runFieldSync("system@cron", REFRESH_SYNC_MAX_WRITES);
     out.fieldSync = "ok";
   } catch {
     out.fieldSync = "error";
