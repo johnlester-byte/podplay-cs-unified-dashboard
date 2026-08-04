@@ -22,7 +22,7 @@ import { readSnapshot } from "@/lib/snapshot";
 import { shouldAllowAutoImport } from "@/lib/api-health";
 import { matchNames, type MrpRecord } from "@/lib/mrp";
 import { parseFlexDate, isNa } from "@/lib/tracker-mrp";
-import { mapOnboardingToLocation, deriveImportStatus } from "@/lib/track-opening-map";
+import { mapOnboardingToLocation, deriveImportStatus, toIsoDate } from "@/lib/track-opening-map";
 import type { HubspotOwner } from "@/lib/hubspot";
 import type { Location, LocationStatus } from "@/lib/types";
 import type { PipelineDeals } from "@/lib/onboarding-deals";
@@ -112,6 +112,8 @@ function buildImportPayload(deal: OnboardingListItem, trackerName: string | null
     hubspot_deal_id: deal.id,
     // Seed the stage we imported at, so the ongoing sync only re-acts on a change.
     hs_stage_seen: deal.properties.hs_pipeline_stage ?? null,
+    // Confirmed Grand Opening date (023) — null when only an anticipated date exists.
+    grand_opening_date: toIsoDate(deal.properties.grand_opening) || null,
     pre_open_done: false,
     post_open_done: false,
   };
@@ -268,6 +270,21 @@ export async function runTrackerImportSync(
                 details: `Status set to "${target}" from HubSpot stage change`,
               } as never);
             }
+          }
+        }
+
+        // Keep the confirmed Grand Opening date synced one-way from HubSpot (023)
+        // so the reminders can tell it apart from an anticipated date. Only writes
+        // when it actually changed; counted toward the tick's write budget.
+        const grand = toIsoDate(deal.properties.grand_opening) || null;
+        if (grand !== (existing.grand_opening_date ?? null)) {
+          const { error: e } = await admin
+            .from("locations")
+            .update({ grand_opening_date: grand } as never)
+            .eq("id", existing.id);
+          if (!e) {
+            existing.grand_opening_date = grand;
+            result.statusSynced++;
           }
         }
 

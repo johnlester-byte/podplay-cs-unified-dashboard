@@ -37,6 +37,10 @@ export interface Location {
   // Last HubSpot pipeline stage the status-sync acted on (022). Lets the sync
   // apply Completed/Archived only when the stage changes, preserving manual edits.
   hs_stage_seen: string | null;
+  // Confirmed Grand Opening date (023), synced one-way from HubSpot's
+  // grand_opening. null = no confirmed grand opening (opening_date is then the
+  // anticipated date). Powers the reminders' grand-vs-anticipated logic.
+  grand_opening_date: string | null;
 }
 
 // Closed Locations (020) — a standalone log of locations that shut down.
